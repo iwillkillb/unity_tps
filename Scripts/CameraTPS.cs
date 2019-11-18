@@ -4,6 +4,15 @@ using UnityEngine;
 
 public class CameraTPS : MonoBehaviour
 {
+    // How to Use?
+    // 1. Make this hierarchy
+    //  Component's object
+    //      > Y Axis (0, 0, 0) All Zero Position
+    //          > X Axis (0, 0, 0) All Zero Position
+    //              > Main Camera
+    //              > Zoom out limit (x, y, z) Free Position
+    // 2. Set Target and other public objects.
+    
     [Header("Main Properties")]
     public Transform target;
     public float rotationSpeed = 2f;
