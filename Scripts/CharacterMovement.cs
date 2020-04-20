@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
@@ -9,20 +9,24 @@ public class CharacterMovement : MonoBehaviour
     protected Animator _Animator;
     protected NavMeshAgent _NavMeshAgent;
 
+    // Movement
+    protected Quaternion moveDir;
+    protected Vector3 moveAxis;
+
+    [Header("Destination")]
+    public Transform trnDestination;
+
+    [Header("Staring mode")]
+    public Transform trnStaringTarget;
+    public float upperBodyAngle;
+
     // Input field
     public float inputAxisHor { get; set; }
     public float inputAxisVer { get; set; }
-    public float inputAxisCamX { get; set; }
-    public float inputAxisCamY { get; set; }
-    public float inputAxisCamZ { get; set; }
     public bool inputJump { get; set; }
 
-    [Header("Auto movement")]
-    public Transform trnDestination;
 
 
-
-    // Start is called before the first frame update
     protected virtual void Awake()
     {
         // Components connecting
@@ -30,15 +34,56 @@ public class CharacterMovement : MonoBehaviour
         _NavMeshAgent = GetComponent<NavMeshAgent>();
     }
 
-    // Update is called once per frame
     protected virtual void FixedUpdate()
     {
         if (trnDestination != null)
         {
             _NavMeshAgent.SetDestination(trnDestination.position);
-
-            // Animator Parameter
-            _Animator.SetFloat("move", _NavMeshAgent.velocity.magnitude / _NavMeshAgent.speed);
         }
+
+        SetAnimatorParameters();
+    }
+
+    void SetAnimatorParameters()
+    {
+        // No Animator Component -> Disable
+
+        if (_Animator == null)
+        {
+            return;
+        }
+
+        // Calculate difference of angle between upper and lower body.
+        // Upper Body : Direction to target or Camera's angle.
+        // Lower Body : This transform's rotation.
+        // 0f : 0  (No difference)
+        // 1f : 45 (Max difference)
+        //float upperBodyAngle;
+
+        // Animation parameter
+        //_Animator.SetFloat("moveX", inputAxisHor);
+        //_Animator.SetFloat("moveZ", inputAxisVer);
+
+        _Animator.SetFloat("move", Mathf.Max(Mathf.Abs(inputAxisHor), Mathf.Abs(inputAxisVer)));
+    }
+
+    float GetUpperBodyAngle(Transform trnStaringTarget)
+    {
+        // This calculates the angle(~180 ~ 180) from me to trnStaringTarget
+        float result = 0f;
+
+        Vector2 start = new Vector2(transform.position.x, transform.position.z);
+        Vector2 end = new Vector2(trnStaringTarget.position.x, trnStaringTarget.position.z);
+        Vector2 v2 = end - start;
+
+        result = (Mathf.Atan2(v2.x, v2.y) * Mathf.Rad2Deg) - transform.eulerAngles.y;
+
+        // Return Degree angle between Itself and Target. (-180 ~ 180)
+        if (result < -180f)
+        {
+            result += 360f;
+        }
+
+        return result;
     }
 }
