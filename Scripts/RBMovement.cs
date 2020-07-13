@@ -3,12 +3,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-[RequireComponent(typeof(CharacterController))]
-public class PlayerMovement : MonoBehaviour
+[RequireComponent(typeof(Rigidbody))]
+public class RBMovement : MonoBehaviour
 {
     // Components
     public Animator _Animator;
-    CharacterController _CharacterController;
+    Rigidbody _Rigidbody;
+    CapsuleCollider _CapsuleCollider;
 
     // Input field
     public float inputAxisHor { get; set; }
@@ -17,10 +18,9 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Move")]
     public float moveSpeed = 7f;
+    public float acceleration = 20f;
     public float slopeForce = 5f;
     float inputAngle;   // Get angle by input.
-    float verticalVelocity = 0f;
-    Vector3 velocity;
 
     [Header("Rotation")]
     public float rotationSlerp = 5f;        // This is used by smooth rotation If you don't use NavMeshAgent's rotation.
@@ -29,7 +29,6 @@ public class PlayerMovement : MonoBehaviour
     // False : The character looks in the direction in which it moves.
 
     [Header("Jump")]
-    public float gravity = 9.81f;
     public float jumpForce = 10f;
 
     [Header("Dash")]
@@ -37,23 +36,43 @@ public class PlayerMovement : MonoBehaviour
     public float dashTime = 0.5f;
     float currentDashTime = 0f;
 
+    [Header("Terrain Check")]
+    public LayerMask terrainLayer;
+    bool isGrounded;
+
+    public Transform groundCheckPoint;
+    public float groundCheckRadius = 0.1f;
+
+    public Transform slopeCheckPoint;
+    public float slopeCheckRange = 1f;
+
 
 
     // Start is called before the first frame update
     void Awake()
     {
         // Components connecting
-        _CharacterController = GetComponent<CharacterController>();
+        _Rigidbody = GetComponent<Rigidbody>();
+        _CapsuleCollider = GetComponent<CapsuleCollider>();
     }
 
-    void FixedUpdate()
+    void Update()
     {
+        // Ground Check
+        isGrounded = Physics.CheckSphere(groundCheckPoint.position, groundCheckRadius, terrainLayer);
+
+        // Jump
+        if (inputJump && isGrounded)
+        {
+            _Rigidbody.AddRelativeForce(Vector3.up * jumpForce, ForceMode.VelocityChange);
+        }
+
         // Input
         inputAxisHor = Input.GetAxis("Horizontal");
         inputAxisVer = Input.GetAxis("Vertical");
         inputJump = Input.GetButtonDown("Jump");
 
-        SetVerticalVelocity();
+        //SetVerticalVelocity();
         Movement();
         Rotation(isStaringFront);
         Dash();
@@ -61,54 +80,13 @@ public class PlayerMovement : MonoBehaviour
         SetAnimationParameter();
     }
 
-    void SetVerticalVelocity()
-    {
-        // Ground check and gravity
-        if (_CharacterController.isGrounded)
-        {
-            if (verticalVelocity > -gravity)
-                verticalVelocity = -gravity * Time.deltaTime;
-
-            if (inputJump)
-            {
-                // Jump
-                verticalVelocity = jumpForce;
-            }
-            else
-            {
-                // Not jump on ground -> Slope force
-                float currentSlopeForce = Mathf.Lerp(0f, slopeForce, Vector3.Angle(Vector3.up, GetGroundNormal()) / _CharacterController.slopeLimit);
-                verticalVelocity -= _CharacterController.height * currentSlopeForce;
-            }
-        }
-        else
-        {
-            verticalVelocity -= gravity * Time.deltaTime;
-
-            // Ceiling check
-            if(_CharacterController.collisionFlags == CollisionFlags.Above)
-            {
-                verticalVelocity = (verticalVelocity > 0f) ? 0f : verticalVelocity;
-            }
-            /*
-            Collider[] cols = Physics.OverlapSphere(transform.position + Vector3.up * _CharacterController.height, 0.1f);
-            foreach (Collider col in cols)
-            {
-                // Except myself
-                if (col.gameObject != gameObject)
-                {
-                    verticalVelocity = (verticalVelocity > 0f) ? 0f : verticalVelocity;
-                    break;
-                }
-            }*/
-        }
-    }
     Vector3 GetGroundNormal()
     {
-        // Slope Check
         RaycastHit slopeHit;
         Vector3 groundNormal = Vector3.up;
-        if (Physics.Raycast(transform.position, -transform.up, out slopeHit, 0.1f))
+
+        // Slope Check
+        if (Physics.Raycast(slopeCheckPoint.position, -transform.up, out slopeHit, slopeCheckRange, terrainLayer))
         {
             groundNormal = slopeHit.normal;
         }
@@ -122,6 +100,7 @@ public class PlayerMovement : MonoBehaviour
         Vector3 moveAxis = Vector3.zero;
         Quaternion moveDir = Quaternion.identity;
         Quaternion groundQuaternion = Quaternion.FromToRotation(transform.up, GetGroundNormal());
+        Vector3 resultVelocity;
 
         if (inputAxisHor != 0f || inputAxisVer != 0f)
         {
@@ -138,12 +117,47 @@ public class PlayerMovement : MonoBehaviour
 
             // Use Input data
             moveAxis = (Vector3.right * inputAxisHor + Vector3.forward * inputAxisVer).normalized;
-        }
 
-        velocity = Vector3.up * verticalVelocity + groundQuaternion * (moveDir * moveAxis) * moveSpeed;
+            // Wall Check
+            RaycastHit hitBody;
+            Vector3 capsuleCastPoint1 = transform.position + _CapsuleCollider.center - (Vector3.up * (_CapsuleCollider.height * 0.5f - _CapsuleCollider.radius - 0.1f));
+            Vector3 capsuleCastPoint2 = transform.position + _CapsuleCollider.center + (Vector3.up * (_CapsuleCollider.height * 0.5f - _CapsuleCollider.radius - 0.1f));
+            if (Physics.CapsuleCast(capsuleCastPoint1, capsuleCastPoint2, _CapsuleCollider.radius, groundQuaternion * moveDir * moveAxis, out hitBody, 0.1f, terrainLayer))
+            {
+                // WWWWW                 WWWWW
+                // WWW                     WWW
+                // W                         W
+                //   C                     C
+                //   |                     |
+                //  -30 -> rotate 60       30 -> rotate -60
+                // Angle perpendicular to the wall
+                float angleToWall = Vector3.SignedAngle(moveDir * moveAxis, -hitBody.normal, Vector3.up);
+
+                // New direction setting : Collision with wall -> Move side of wall(Perpendicular to the wall)
+                if (angleToWall > 0f)
+                    moveDir = Quaternion.Euler(Vector3.up * (Camera.main.transform.eulerAngles.y + (-90 + angleToWall)));
+                else
+                    moveDir = Quaternion.Euler(Vector3.up * (Camera.main.transform.eulerAngles.y + (90 + angleToWall)));
+            }
+        }
+        // Setting velocity
+        resultVelocity = groundQuaternion * (moveDir * moveAxis) * moveSpeed;
 
         // Actual Moving
-        _CharacterController.Move(velocity * Time.deltaTime);
+        _Rigidbody.velocity = isGrounded ? resultVelocity : new Vector3(resultVelocity.x, _Rigidbody.velocity.y, resultVelocity.z);
+
+        /*
+        if (_Rigidbody.velocity.magnitude < moveSpeed)
+            _Rigidbody.AddForce(resultVelocity * acceleration, ForceMode.Acceleration);
+        // Break
+        if (inputAxisHor == 0f && inputAxisVer == 0f)
+        {
+            Vector3 breakVelocity = _Rigidbody.velocity;
+            breakVelocity.x *= 0.9f;
+            breakVelocity.z *= 0.9f;
+            _Rigidbody.velocity = breakVelocity;
+        }
+        */
     }
 
     void Rotation(bool isStaringFront)
@@ -181,7 +195,8 @@ public class PlayerMovement : MonoBehaviour
             Rotation(true);
 
             // Dash to camera's forward
-            _CharacterController.Move(Quaternion.Euler(Vector3.up * Camera.main.transform.eulerAngles.y) * Vector3.forward * (dashSpeed * currentDashTime / dashTime) * Time.deltaTime);
+            //_CharacterController.Move(Quaternion.Euler(Vector3.up * Camera.main.transform.eulerAngles.y) * Vector3.forward * (dashSpeed * currentDashTime / dashTime) * Time.deltaTime);
+            _Rigidbody.velocity = Quaternion.Euler(Vector3.up * Camera.main.transform.eulerAngles.y) * Vector3.forward * (dashSpeed * currentDashTime / dashTime);
         }
     }
 
@@ -202,7 +217,7 @@ public class PlayerMovement : MonoBehaviour
             _Animator.SetFloat("move", Mathf.Max(Mathf.Abs(inputAxisHor), Mathf.Abs(inputAxisVer)));
         }
 
-        _Animator.SetBool("isGrounded", _CharacterController.isGrounded);
+        _Animator.SetBool("isGrounded", isGrounded);
     }
 
 
